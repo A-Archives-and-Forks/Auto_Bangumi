@@ -112,9 +112,23 @@ class RSSEngine(Database):
 
     def _get_filter_pattern(self, filter_str: str) -> re.Pattern:
         if filter_str not in self._filter_cache:
-            self._filter_cache[filter_str] = re.compile(
-                filter_str.replace(",", "|"), re.IGNORECASE
-            )
+            raw_pattern = filter_str.replace(",", "|")
+            try:
+                self._filter_cache[filter_str] = re.compile(
+                    raw_pattern, re.IGNORECASE
+                )
+            except re.error:
+                # Filter contains invalid regex chars (e.g. unmatched '[')
+                # Fall back to escaping each term for literal matching
+                terms = filter_str.split(",")
+                escaped = "|".join(re.escape(t) for t in terms)
+                self._filter_cache[filter_str] = re.compile(
+                    escaped, re.IGNORECASE
+                )
+                logger.warning(
+                    f"[Engine] Filter '{filter_str}' contains invalid regex, "
+                    f"using literal matching"
+                )
         return self._filter_cache[filter_str]
 
     def match_torrent(self, torrent: Torrent) -> Optional[Bangumi]:

@@ -64,10 +64,14 @@ class Renamer(DownloadClient):
         season = f"0{season_num}" if season_num < 10 else season_num
         # Apply episode offset
         original_episode = int(file_info.episode)
-        adjusted_episode = original_episode + episode_offset
-        # Episode 0 is valid for specials/OVAs when the source episode is already 0.
-        # But an offset producing exactly 0 (e.g., EP12 + offset -12) is almost always
-        # an off-by-one user error, so revert to original in that case.
+        if original_episode == 0 and episode_offset != 0:
+            # Episode 0 is a special/OVA — never apply offset to avoid
+            # overwriting regular episodes (see issue #977)
+            adjusted_episode = 0
+        else:
+            adjusted_episode = original_episode + episode_offset
+        # An offset producing a non-positive result (e.g., EP5 + offset -10)
+        # is almost always a misconfiguration, so revert to original.
         if adjusted_episode < 0 or (adjusted_episode == 0 and original_episode > 0):
             adjusted_episode = original_episode
             logger.warning(
@@ -138,7 +142,10 @@ class Renamer(DownloadClient):
                     # Season comes from folder which already has offset applied
                     # Only apply episode offset
                     original_ep = int(ep.episode)
-                    adjusted_episode = original_ep + episode_offset
+                    if original_ep == 0 and episode_offset != 0:
+                        adjusted_episode = 0
+                    else:
+                        adjusted_episode = original_ep + episode_offset
                     if adjusted_episode < 0 or (
                         adjusted_episode == 0 and original_ep > 0
                     ):
