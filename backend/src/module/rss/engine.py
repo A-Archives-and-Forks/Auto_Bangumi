@@ -16,6 +16,7 @@ class RSSEngine(Database):
     def __init__(self, _engine=engine):
         super().__init__(_engine)
         self._to_refresh = False
+        self._filter_cache: dict[str, re.Pattern] = {}
 
     @staticmethod
     async def _get_torrents(rss: RSSItem) -> list[Torrent]:
@@ -108,8 +109,6 @@ class RSSEngine(Database):
         except Exception as e:
             logger.warning(f"[Engine] Failed to fetch RSS {rss_item.name}: {e}")
             return [], str(e)
-
-    _filter_cache: dict[str, re.Pattern] = {}
 
     def _get_filter_pattern(self, filter_str: str) -> re.Pattern:
         if filter_str not in self._filter_cache:

@@ -126,7 +126,9 @@ class BangumiDatabase:
 
         return None
 
-    def add_title_alias(self, bangumi_id: int, new_title_raw: str) -> bool:
+    def add_title_alias(
+        self, bangumi_id: int, new_title_raw: str, auto_commit: bool = True
+    ) -> bool:
         """
         Add a new title_raw alias to an existing bangumi.
 
@@ -152,8 +154,9 @@ class BangumiDatabase:
         _set_aliases_list(bangumi, aliases)
 
         self.session.add(bangumi)
-        self.session.commit()
-        _invalidate_bangumi_cache()
+        if auto_commit:
+            self.session.commit()
+            _invalidate_bangumi_cache()
         logger.info(
             f"[Database] Added alias '{new_title_raw}' to bangumi '{bangumi.official_title}' "
             f"(id: {bangumi_id})"
@@ -233,8 +236,8 @@ class BangumiDatabase:
         for d in to_add:
             semantic_match = self.find_semantic_duplicate(d)
             if semantic_match:
-                # Add as alias instead of creating new entry
-                self.add_title_alias(semantic_match.id, d.title_raw)
+                # Add as alias instead of creating new entry (defer commit)
+                self.add_title_alias(semantic_match.id, d.title_raw, auto_commit=False)
                 semantic_merged += 1
                 logger.info(
                     f"[Database] Merged '{d.title_raw}' as alias to existing "
@@ -254,9 +257,10 @@ class BangumiDatabase:
 
         if not unique_to_add:
             if semantic_merged > 0:
+                self.session.commit()
+                _invalidate_bangumi_cache()
                 logger.debug(
-                    "[Database] %s bangumi merged as aliases, "
-                    "rest were duplicates.",
+                    "[Database] %s bangumi merged as aliases, " "rest were duplicates.",
                     semantic_merged,
                 )
             else:
@@ -330,7 +334,9 @@ class BangumiDatabase:
             self.session.add(bangumi)
             self.session.commit()
             _invalidate_bangumi_cache()
-            logger.debug("[Database] Update %s poster_link to %s.", title_raw, poster_link)
+            logger.debug(
+                "[Database] Update %s poster_link to %s.", title_raw, poster_link
+            )
 
     def delete_one(self, _id: int):
         statement = select(Bangumi).where(Bangumi.id == _id)
@@ -427,6 +433,7 @@ class BangumiDatabase:
                     rss_link not in match_data.rss_link
                     and match_data.title_raw not in rss_updated
                 ):
+                    match_data = self.session.merge(match_data)
                     match_data.rss_link += f",{rss_link}"
                     match_data.added = False
                     rss_updated.add(match_data.title_raw)
@@ -481,8 +488,8 @@ class BangumiDatabase:
         conditions = select(Bangumi).where(
             or_(
                 Bangumi.added == 0,
-                Bangumi.rule_name is None,
-                Bangumi.save_path is None,
+                Bangumi.rule_name.is_(None),
+                Bangumi.save_path.is_(None),
             )
         )
         result = self.session.execute(conditions)
