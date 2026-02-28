@@ -11,6 +11,11 @@ router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
 
 _SENSITIVE_KEYS = ("password", "api_key", "token", "secret")
+_MASK = "********"
+
+
+def _is_sensitive(key: str) -> bool:
+    return any(s in key.lower() for s in _SENSITIVE_KEYS)
 
 
 def _sanitize_dict(d: dict) -> dict:
@@ -19,36 +24,34 @@ def _sanitize_dict(d: dict) -> dict:
     for k, v in d.items():
         if isinstance(v, dict):
             result[k] = _sanitize_dict(v)
-        elif isinstance(v, str) and any(s in k.lower() for s in _SENSITIVE_KEYS):
-            result[k] = "********"
+        elif isinstance(v, list):
+            result[k] = [
+                _sanitize_dict(item) if isinstance(item, dict) else item for item in v
+            ]
+        elif isinstance(v, str) and _is_sensitive(k):
+            result[k] = _MASK
         else:
             result[k] = v
     return result
 
 
-def _restore_sensitive(incoming: dict, current: dict) -> dict:
-    """Replace masked '********' values with the real values from current config.
-
-    When the frontend submits a config update it sends back the masked
-    placeholder for every sensitive field (password, token, …).  Saving that
-    placeholder verbatim would overwrite the real credential with the literal
-    string '********'.  This function walks the incoming dict and, wherever it
-    finds the placeholder, substitutes the value that is already stored in the
-    running settings.
-    """
-    result = {}
+def _restore_masked(incoming: dict, current: dict) -> dict:
+    """Replace masked sentinel values with real values from current config."""
     for k, v in incoming.items():
-        if isinstance(v, dict):
-            result[k] = _restore_sensitive(v, current.get(k, {}))
-        elif (
-            isinstance(v, str)
-            and v == "********"
-            and any(s in k.lower() for s in _SENSITIVE_KEYS)
-        ):
-            result[k] = current.get(k, v)
-        else:
-            result[k] = v
-    return result
+        if isinstance(v, dict) and isinstance(current.get(k), dict):
+            _restore_masked(v, current[k])
+        elif isinstance(v, list) and isinstance(current.get(k), list):
+            cur_list = current[k]
+            for i, item in enumerate(v):
+                if (
+                    isinstance(item, dict)
+                    and i < len(cur_list)
+                    and isinstance(cur_list[i], dict)
+                ):
+                    _restore_masked(item, cur_list[i])
+        elif v == _MASK and _is_sensitive(k):
+            incoming[k] = current.get(k, v)
+    return incoming
 
 
 @router.get("/get", dependencies=[Depends(get_current_user)])
@@ -63,10 +66,8 @@ async def get_config():
 async def update_config(config: Config):
     """Persist and reload configuration from the supplied payload."""
     try:
-        incoming = config.dict()
-        current = settings.dict()
-        restored = _restore_sensitive(incoming, current)
-        settings.save(config_dict=restored)
+        config_dict = _restore_masked(config.dict(), settings.dict())
+        settings.save(config_dict=config_dict)
         settings.load()
         # update_rss()
         logger.info("Config updated")
